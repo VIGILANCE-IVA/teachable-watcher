@@ -1,31 +1,29 @@
 const axios = require("axios");
 const moment = require("moment");
+const store = require("./store");
 
-function template(class_name, scene, time) {
-  let formatted_time = moment(time, "DD-MM-YYYY HH:mm:ss").format("hh:mma");
+exports.message = (time) => {
+  return store
+    .config("alert_message")
+    .replace(/%{class_name}/g, store.config("anomaly_class"))
+    .replace(/%{scene}/g, store.config("scene"))
+    .replace(
+      /%{time}/g,
+      time ? moment(time, "DD-MM-YYYY HH:mm:ss").format("hh:mma") : ""
+    );
+};
 
-  return (
-    process.env.ALERT_MESSAGE ||
-    `There is a %{class_name} at the %{scene}.\n%{time}`
-  )
-    .replace(/%{class_name}/g, class_name)
-    .replace(/%{scene}/g, scene)
-    .replace(/%{time}/g, formatted_time);
-}
-
-exports.sms = function (
-  class_name,
-  scene = "[SCENE NAME]",
-  time,
-  phone = process.env.MOBILE_PHONE
-) {
-  let message = template(class_name, scene, time);
+exports.sms = function (time) {
+  let phone = store.config("notification_phone_number");
+  let message = exports.message(time);
 
   axios
     .post(
-      `https://sms.koodeyo.com/api/v1/sms?apiKey=${process.env.SOFTPHONE_KEY}`,
+      `https://sms.koodeyo.com/api/v1/sms?apiKey=${store.config(
+        "softphone_key"
+      )}`,
       {
-        to: phone,
+        to: phone.replace(/\s/, "").split(","),
         message,
       }
     )

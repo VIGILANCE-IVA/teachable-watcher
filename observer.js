@@ -5,9 +5,10 @@ const xtend = require("xtend");
 const axios = require("axios");
 const store = require("./store");
 const Utils = require("./utils");
+const _ = require("lodash");
 
 class Observer extends EventEmitter {
-  constructor(opts = {}) {
+  constructor() {
     super();
     this.predictions = [];
     this.anomaly = false;
@@ -19,12 +20,10 @@ class Observer extends EventEmitter {
       prediction_count: 5,
       session_timeout: 60000, // one minute
     };
-
-    this.opts = xtend({}, opts);
   }
 
   opt(key) {
-    return this.opts[key] || this.defaults[key];
+    return store.config(key) || this.defaults[key];
   }
 
   addPredictions(predictions) {
@@ -38,56 +37,54 @@ class Observer extends EventEmitter {
   }
 
   start() {
-    if (this.running) return;
-
-    axios
-      .post(
-        this.opts.service,
-        xtend(
-          {
-            delay: 0,
-          },
-          this.opts.service_data
+    return new Promise((resolve, reject) => {
+      if (this.running) return resolve();
+      axios
+        .post(
+          this.opt("service"),
+          xtend(
+            {
+              delay: 0,
+            },
+            this.opt("service_data")
+          )
         )
-      )
-      .then((response) => {
-        let { task_id } = response.data;
+        .then((response) => {
+          let { task_id } = response.data;
 
-        let time = moment()
-          .tz(this.opt("timezone"))
-          .format("DD-MM-YYYY HH:mm:ss");
+          let time = moment()
+            .tz(this.opt("timezone"))
+            .format("DD-MM-YYYY HH:mm:ss");
 
-        store.setTask(task_id, { status: "running", start_time: time });
-        this.running = true;
-
-        this.interval = setInterval(
-          () => this.check(),
-          this.opts.watch_interval
-        );
-      })
-      .catch(function (error) {
-        console.error(error.message);
-      });
+          store.setTask(task_id, { status: "running", start_time: time });
+          this.daemon();
+          resolve();
+        })
+        .catch(reject);
+    });
   }
 
   stop() {
-    if (this.interval) clearInterval(this.interval);
-    this.predictions = [];
-    this.anomaly = false;
-    this.running = false;
-    let time = moment().tz(this.opt("timezone")).format("DD-MM-YYYY HH:mm:ss");
-    let task_id = store.runningTask();
+    return new Promise((resolve, reject) => {
+      if (this.interval) clearInterval(this.interval);
+      this.predictions = [];
+      this.anomaly = false;
+      this.running = false;
+      let time = moment()
+        .tz(this.opt("timezone"))
+        .format("DD-MM-YYYY HH:mm:ss");
+      let task_id = store.runningTask();
 
-    axios
-      .put(this.opts.service, {
-        task_id,
-      })
-      .then(() => {
-        store.setTask(task_id, { status: "stopped", stop_time: time });
-      })
-      .catch(function (error) {
-        console.error(error.message);
-      });
+      axios
+        .put(this.opt("service"), {
+          task_id,
+        })
+        .then(() => {
+          store.setTask(task_id, { status: "stopped", stop_time: time });
+          resolve();
+        })
+        .catch(reject);
+    });
   }
 
   check() {
@@ -95,9 +92,9 @@ class Observer extends EventEmitter {
       let predictions = this.predictions
         .filter((i) => i.exact)
         .slice(0, this.opt("prediction_count"))
-        .filter((i) => i.class === this.opt("anomaly_class"));
+        .filter((i) => `${i.class}` === `${this.opt("anomaly_class")}`);
 
-      if (predictions.length >= this.opt("prediction_count")) {
+      if (predictions.length >= Number(this.opt("prediction_count"))) {
         let time = moment()
           .tz(this.opt("timezone"))
           .format("DD-MM-YYYY HH:mm:ss");
@@ -114,20 +111,39 @@ class Observer extends EventEmitter {
     this.anomaly = false;
   }
 
+  daemon() {
+    this.running = true;
+    this.interval = setInterval(() => this.check(), this.opt("watch_interval"));
+  }
+
+  restart() {
+    if (this.start_job) this.start_job.stop();
+    if (this.stop_job) this.stop_job.stop();
+    if (this.interval) clearInterval(this.interval);
+
+    if (this.running) {
+      this.clear();
+      this.daemon();
+      this.cronTime();
+      return;
+    }
+
+    this.init();
+  }
+
   init() {
-    const time = store.time();
-    let cron = Utils.cronTime(time);
+    let cron = Utils.cronTime(this.opt("cron"));
 
     this.start_job = new CronJob({
       cronTime: cron.start,
       timeZone: this.opt("timezone"),
-      onTick: () => this.start(),
+      onTick: async () => await this.start(),
     });
 
     this.stop_job = new CronJob({
       cronTime: cron.stop,
       timeZone: this.opt("timezone"),
-      onTick: () => this.stop(),
+      onTick: async () => await this.stop(),
     });
 
     this.start_job.start();
@@ -135,11 +151,9 @@ class Observer extends EventEmitter {
   }
 
   cronTime(data) {
-    let cron = Utils.cronTime(data);
+    let cron = Utils.cronTime(_.defaultTo(data, this.opt("cron")));
 
     if (cron) {
-      store.setTime(data);
-
       let cronTimeStart = new CronTime(cron.start, this.opt("timezone"));
       let cronTimeStop = new CronTime(cron.stop, this.opt("timezone"));
 

@@ -1,75 +1,71 @@
 const express = require("express");
+const http = require("http");
 const app = express();
+const server = http.createServer(app);
 require("dotenv").config();
 const port = process.env.PORT;
 const Observer = require("./observer");
 const store = require("./store");
 const notify = require("./notify");
+const cors = require("cors");
+const AppError = require("./AppError");
+const httpStatus = require("http-status");
+const { errorConverter, errorHandler } = require("./error.middleware");
+const utils = require("./utils");
+const { Server } = require("socket.io");
+const moment = require("moment");
+const watch = (global.watch = new Observer());
+const apiRouter = require("./api.route");
 
-const watch = new Observer({
-  timezone: process.env.TZ,
-  anomaly_class: process.env.ANOMALY_CLASS,
-  prediction_count: process.env.PREDICTION_COUNT,
-  session_timeout: process.env.SESSION_TIMEOUT,
-  watch_interval: process.env.WATCH_INTERVAL,
-  service: process.env.SERVICE || `http://127.0.0.1:${port}/predictions/video`,
-  service_data: {
-    video_uri: process.env.VIDEO_URL,
-    delay: process.env.DELAY || 1,
-    webhook: process.env.WEBHOOK || `http://127.0.0.1:${port}/webhook`,
+//socket io
+const io = (global.io = new Server(server, {
+  cors: {
+    origin: "*",
   },
-});
+  allowRequest: async (req, callback) => {
+    let payload = await utils.verifyToken(req.headers["x-access-token"]);
+    callback(null, payload);
+  },
+}));
 
 //get predictions
-watch.on("predictions", (time, predictions) => {});
-
-watch.on("anomaly", (time, predictions) => {
-  console.log("anomaly", time, predictions);
-  store.setAnomaly(time, predictions);
-  //send sms to responsible person
-  notify.sms(watch.opt("anomaly_class"), process.env.SCENE_NAME, time);
+watch.on("predictions", (time, predictions) => {
+  io.emit("predictions", { [time]: predictions });
 });
 
+watch.on("anomaly", (time, predictions) => {
+  io.emit("anomaly", { [time]: predictions });
+
+  //send notification
+  io.emit("notification", {
+    title: "Anomaly Alert",
+    text: notify.message(),
+    titleRightText: moment(time, "DD-MM-YYYY HH:mm:ss").format("hh:mma"),
+    closeOnClick: true,
+    closeTimeout: 5000,
+  });
+
+  //send sms to responsible person
+  if (watch.opt("sms_notifications")) {
+    notify.sms(time);
+  }
+
+  store.setAnomaly(time, predictions);
+});
+
+// enable cors
+const corsOptions = {
+  exposedHeaders: ["X-Access-Token"],
+  origin: "*",
+  credentials: true,
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.disable("x-powered-by");
-
-app.get("/", (req, res) => {
-  res.send("ok");
-});
-
-app.get("/anomalies", (req, res) => {
-  res.json(store.anomalies());
-});
-
-app.get("/tasks", (req, res) => {
-  res.json(store.tasks());
-});
-
-app
-  .route("/cron")
-  .get((req, res) => {
-    res.json(store.time());
-  })
-  .post((req, res) => {
-    watch.cronTime(req.body);
-    res.send("ok");
-  });
-
-app.post("/start", (req, res) => {
-  watch.stop();
-  res.send("ok");
-});
-
-app.post("/stop", (req, res) => {
-  watch.stop();
-  res.send("ok");
-});
-
-app.post("/webhook", (req, res) => {
-  watch.addPredictions(req.body);
-  res.status(200).send("ok");
-});
+app.use("/api", apiRouter);
 
 /**
  * <Mocking>
@@ -84,19 +80,23 @@ app
   .route("/predictions/video")
   .post((req, res) => {
     mock_interval = setInterval(() => {
-      axios.post(req.body.webhook, [
-        {
-          exact: true,
-          class: "something",
-          confidence: 1,
-        },
-        {
-          exact: false,
-          class: "nothing",
-          confidence: 0,
-        },
-      ]);
-    }, Number(`${req.body.delay}000`));
+      axios
+        .post(req.body.webhook, {
+          predictions: [
+            {
+              exact: true,
+              class: "something",
+              confidence: 1,
+            },
+            {
+              exact: false,
+              class: "nothing",
+              confidence: 0,
+            },
+          ],
+        })
+        .catch(console.log);
+    }, Number(`${req.body.delay || 1}000`));
 
     res.json({
       task_id: 1,
@@ -112,7 +112,18 @@ app
  * </Mocking>
  * */
 
-app.listen(port, () => {
+// send back a 404 error for any unknown api request
+app.use((req, res, next) => {
+  next(new AppError("Not found", httpStatus.NOT_FOUND));
+});
+
+// convert error to AppError, if needed
+app.use(errorConverter);
+
+// handle error
+app.use(errorHandler);
+
+server.listen(port, () => {
   console.log(`App listening at http://localhost:${port}`);
   watch.init();
 });
