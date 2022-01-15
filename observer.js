@@ -132,6 +132,7 @@ class Observer extends EventEmitter {
   }
 
   init() {
+    if (!this.opt("cron").run) return;
     let cron = Utils.cronTime(this.opt("cron"));
 
     this.start_job = new CronJob({
