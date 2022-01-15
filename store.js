@@ -56,14 +56,12 @@ Store.prototype.config = function (key) {
       service_data: {
         video_uri: _.defaultTo(process.env.VIDEO_URL, 0),
         delay: _.defaultTo(process.env.DELAY, 0),
-        webhook: _.defaultTo(
+        webhook: `${_.defaultTo(
           process.env.WEBHOOK,
-          `http://127.0.0.1:${
-            process.env.PORT
-          }/api/webhook?X-Access-Token=${utils.generateAuthToken({
-            webhook: true,
-          })}`
-        ),
+          `http://127.0.0.1:${process.env.PORT}/api/webhook`
+        )}?X-Access-Token=${utils.generateAuthToken({
+          webhook: true,
+        })}`,
       },
     },
     config.get(this.configs)
