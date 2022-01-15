@@ -74,15 +74,13 @@ class Observer extends EventEmitter {
         .tz(this.opt("timezone"))
         .format("DD-MM-YYYY HH:mm:ss");
       let task_id = store.runningTask();
+      store.setTask(task_id, { status: "stopped", stop_time: time });
 
       axios
         .put(this.opt("service"), {
           task_id,
         })
-        .then(() => {
-          store.setTask(task_id, { status: "stopped", stop_time: time });
-          resolve();
-        })
+        .then(resolve)
         .catch(reject);
     });
   }
@@ -93,6 +91,13 @@ class Observer extends EventEmitter {
         .filter((i) => i.exact)
         .slice(0, this.opt("prediction_count"))
         .filter((i) => `${i.class}` === `${this.opt("anomaly_class")}`);
+
+      console.log(
+        "observer",
+        predictions,
+        predictions.length,
+        this.opt("prediction_count")
+      );
 
       if (predictions.length >= Number(this.opt("prediction_count"))) {
         let time = moment()
@@ -132,6 +137,7 @@ class Observer extends EventEmitter {
   }
 
   init() {
+    if (!this.opt("cron").run) return;
     let cron = Utils.cronTime(this.opt("cron"));
 
     this.start_job = new CronJob({

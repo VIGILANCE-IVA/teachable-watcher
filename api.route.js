@@ -6,7 +6,7 @@ const authRoute = require("./auth.route");
 const authMiddleware = require("./auth.middleware");
 
 router.use("/auth", authRoute);
-router.use(catchAsync(authMiddleware.authenticate));
+// router.use(catchAsync(authMiddleware.authenticate));
 
 router
   .route("/cfg")

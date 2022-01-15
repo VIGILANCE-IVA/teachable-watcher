@@ -30,12 +30,12 @@ const io = (global.io = new Server(server, {
 
 //get predictions
 watch.on("predictions", (time, predictions) => {
+  // console.log(predictions);
   io.emit("predictions", { [time]: predictions });
 });
 
 watch.on("anomaly", (time, predictions) => {
   io.emit("anomaly", { [time]: predictions });
-
   //send notification
   io.emit("notification", {
     title: "Anomaly Alert",

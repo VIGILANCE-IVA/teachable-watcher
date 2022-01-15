@@ -33,6 +33,7 @@ Store.prototype.config = function (key) {
   let cfg = xtend(
     {
       cron: {
+        run: _.defaultTo(process.env.CRON_RUN, false),
         start_time: _.defaultTo(process.env.START_TIME, "23:59"),
         stop_time: _.defaultTo(process.env.STOP_TIME, "06:59"),
       },
